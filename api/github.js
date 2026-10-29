@@ -11,9 +11,7 @@ function sign(data) {
 }
 
 function makeToken() {
-  const payload = Buffer.from(
-    JSON.stringify({ t: Date.now() })
-  ).toString('base64url');
+  const payload = Buffer.from(JSON.stringify({ t: Date.now() })).toString('base64url');
   return payload + '.' + sign(payload);
 }
 
@@ -91,8 +89,7 @@ async function ghFetch(path, options) {
   });
   const text = await res.text();
   let data;
-  try { data = JSON.parse(text); }
-  catch (e) { data = { raw: text }; }
+  try { data = JSON.parse(text); } catch (e) { data = { raw: text }; }
   return { ok: res.ok, status: res.status, data: data };
 }
 
@@ -107,35 +104,26 @@ module.exports = async function handler(req, res) {
   const action = String(body.action || '');
   const cookies = parseCookies(req);
 
-  // ============ LOGIN (password only) ============
   if (action === 'login') {
     const password = String(body.password || '').trim();
     const expected = String(process.env.AKSES_PW || '').trim();
-
     if (!expected) {
       return res.status(500).json({
         ok: false,
-        error: 'AKSES_PW belum di-set di Vercel Environment Variables. Set dulu lalu Redeploy (uncheck cache).'
+        error: 'AKSES_PW belum di-set di Vercel Environment Variables.'
       });
     }
-
     if (password === expected) {
       const token = makeToken();
       res.setHeader(
         'Set-Cookie',
-        'session=' + token +
-        '; HttpOnly; Path=/; Max-Age=86400; SameSite=Lax; Secure'
+        'session=' + token + '; HttpOnly; Path=/; Max-Age=86400; SameSite=Lax; Secure'
       );
       return res.status(200).json({ ok: true });
     }
-
-    return res.status(401).json({
-      ok: false,
-      error: 'Password salah'
-    });
+    return res.status(401).json({ ok: false, error: 'Password salah' });
   }
 
-  // ============ LOGOUT ============
   if (action === 'logout') {
     res.setHeader(
       'Set-Cookie',
@@ -144,26 +132,19 @@ module.exports = async function handler(req, res) {
     return res.status(200).json({ ok: true });
   }
 
-  // ============ CHECK ============
   if (action === 'check') {
-    const loggedIn = verifyToken(cookies.session);
-    return res.status(200).json({ ok: true, loggedIn: loggedIn });
+    return res.status(200).json({ ok: true, loggedIn: verifyToken(cookies.session) });
   }
 
-  // ============ PROTECTED ============
   if (!verifyToken(cookies.session)) {
     return res.status(401).json({ ok: false, error: 'Belum login' });
   }
 
   if (!process.env.GITHUB_TOKEN) {
-    return res.status(500).json({
-      ok: false,
-      error: 'GITHUB_TOKEN belum di-set di Vercel'
-    });
+    return res.status(500).json({ ok: false, error: 'GITHUB_TOKEN belum di-set.' });
   }
 
   try {
-    // ============ LIST REPOS ============
     if (action === 'listRepos') {
       const r = await ghFetch(
         '/user/repos?per_page=100&sort=updated&affiliation=owner,collaborator,organization_member'
@@ -171,7 +152,7 @@ module.exports = async function handler(req, res) {
       if (!r.ok) {
         return res.status(r.status).json({
           ok: false,
-          error: r.data.message || 'Gagal ambil daftar repo. Cek scope token (harus `repo`).'
+          error: r.data.message || 'Gagal ambil daftar repo. Cek scope token.'
         });
       }
       const items = Array.isArray(r.data) ? r.data : [];
@@ -192,12 +173,10 @@ module.exports = async function handler(req, res) {
       });
     }
 
-    // ============ FILE ACTIONS ============
     const repoFull = String(body.repo || '').trim();
     if (!repoFull || repoFull.indexOf('/') === -1) {
       return res.status(400).json({ ok: false, error: 'Repo belum dipilih' });
     }
-
     const parts = repoFull.split('/');
     const owner = parts[0];
     const repo = parts.slice(1).join('/');
@@ -206,8 +185,7 @@ module.exports = async function handler(req, res) {
 
     if (action === 'list') {
       const path = cleanPath(body.path);
-      const url = (path ? base + '/' + path : base) +
-        '?ref=' + encodeURIComponent(branch);
+      const url = (path ? base + '/' + path : base) + '?ref=' + encodeURIComponent(branch);
       const r = await ghFetch(url);
       if (!r.ok) {
         return res.status(r.status).json({
@@ -220,24 +198,15 @@ module.exports = async function handler(req, res) {
       return res.status(200).json({
         ok: true,
         items: arr.map(function (i) {
-          return {
-            name: i.name,
-            path: i.path,
-            type: i.type,
-            size: i.size,
-            sha: i.sha
-          };
+          return { name: i.name, path: i.path, type: i.type, size: i.size, sha: i.sha };
         })
       });
     }
 
     if (action === 'read') {
       const path = cleanPath(body.path);
-      if (!path) return res.status(400).json({ ok: false, error: 'Path file wajib diisi' });
-
-      const r = await ghFetch(
-        base + '/' + path + '?ref=' + encodeURIComponent(branch)
-      );
+      if (!path) return res.status(400).json({ ok: false, error: 'Path wajib diisi' });
+      const r = await ghFetch(base + '/' + path + '?ref=' + encodeURIComponent(branch));
       if (!r.ok) {
         return res.status(r.status).json({
           ok: false,
@@ -260,42 +229,52 @@ module.exports = async function handler(req, res) {
     if (action === 'write') {
       const path = cleanPath(body.path);
       const content = body.content === undefined ? '' : String(body.content);
-      const message = String(body.message || 'Update ' + path + ' via Fortech Panel');
+      const message = String(body.message || (body.isNew ? 'Create ' : 'Update ') + path + ' via Fortech Panel');
+      if (!path) return res.status(400).json({ ok: false, error: 'Path wajib diisi' });
 
-      if (!path) return res.status(400).json({ ok: false, error: 'Path file wajib diisi' });
+      if (!body.isNew) {
+        let sha;
+        const g = await ghFetch(base + '/' + path + '?ref=' + encodeURIComponent(branch));
+        if (g.ok && g.data && g.data.sha) sha = g.data.sha;
 
-      let sha;
-      const g = await ghFetch(base + '/' + path + '?ref=' + encodeURIComponent(branch));
-      if (g.ok && g.data && g.data.sha) sha = g.data.sha;
+        const payload = {
+          message: message,
+          content: Buffer.from(content, 'utf-8').toString('base64'),
+          branch: branch
+        };
+        if (sha) payload.sha = sha;
 
-      const payload = {
-        message: message,
-        content: Buffer.from(content, 'utf-8').toString('base64'),
-        branch: branch
-      };
-      if (sha) payload.sha = sha;
+        const r = await ghFetch(base + '/' + path, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        if (!r.ok) {
+          return res.status(r.status).json({ ok: false, error: r.data.message || 'Gagal simpan' });
+        }
+        return res.status(200).json({ ok: true });
+      }
 
       const r = await ghFetch(base + '/' + path, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
+        body: JSON.stringify({
+          message: message,
+          content: Buffer.from(content, 'utf-8').toString('base64'),
+          branch: branch
+        })
       });
       if (!r.ok) {
-        return res.status(r.status).json({
-          ok: false,
-          error: r.data.message || 'Gagal simpan'
-        });
+        return res.status(r.status).json({ ok: false, error: r.data.message || 'Gagal buat file' });
       }
       return res.status(200).json({ ok: true });
     }
 
     if (action === 'delete') {
       const path = cleanPath(body.path);
-      if (!path) return res.status(400).json({ ok: false, error: 'Path file wajib diisi' });
-
+      if (!path) return res.status(400).json({ ok: false, error: 'Path wajib diisi' });
       const g = await ghFetch(base + '/' + path + '?ref=' + encodeURIComponent(branch));
       if (!g.ok) return res.status(404).json({ ok: false, error: 'File tidak ditemukan' });
-
       const r = await ghFetch(base + '/' + path, {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
@@ -306,17 +285,14 @@ module.exports = async function handler(req, res) {
         })
       });
       if (!r.ok) {
-        return res.status(r.status).json({
-          ok: false,
-          error: r.data.message || 'Gagal hapus'
-        });
+        return res.status(r.status).json({ ok: false, error: r.data.message || 'Gagal hapus' });
       }
       return res.status(200).json({ ok: true });
     }
 
     if (action === 'exists') {
       const path = cleanPath(body.path);
-      if (!path) return res.status(400).json({ ok: false, error: 'Path file wajib diisi' });
+      if (!path) return res.status(400).json({ ok: false, error: 'Path wajib diisi' });
       const g = await ghFetch(base + '/' + path + '?ref=' + encodeURIComponent(branch));
       return res.status(200).json({ ok: true, exists: !!g.ok });
     }
