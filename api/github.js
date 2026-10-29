@@ -104,6 +104,7 @@ module.exports = async function handler(req, res) {
   const action = String(body.action || '');
   const cookies = parseCookies(req);
 
+  // ===== LOGIN =====
   if (action === 'login') {
     const password = String(body.password || '').trim();
     const expected = String(process.env.AKSES_PW || '').trim();
@@ -124,6 +125,7 @@ module.exports = async function handler(req, res) {
     return res.status(401).json({ ok: false, error: 'Password salah' });
   }
 
+  // ===== LOGOUT =====
   if (action === 'logout') {
     res.setHeader(
       'Set-Cookie',
@@ -132,10 +134,12 @@ module.exports = async function handler(req, res) {
     return res.status(200).json({ ok: true });
   }
 
+  // ===== CHECK =====
   if (action === 'check') {
     return res.status(200).json({ ok: true, loggedIn: verifyToken(cookies.session) });
   }
 
+  // ===== AUTH REQUIRED =====
   if (!verifyToken(cookies.session)) {
     return res.status(401).json({ ok: false, error: 'Belum login' });
   }
@@ -145,6 +149,7 @@ module.exports = async function handler(req, res) {
   }
 
   try {
+    // ===== LIST REPOS =====
     if (action === 'listRepos') {
       const r = await ghFetch(
         '/user/repos?per_page=100&sort=updated&affiliation=owner,collaborator,organization_member'
@@ -173,6 +178,60 @@ module.exports = async function handler(req, res) {
       });
     }
 
+    // ===== CREATE REPO =====
+    if (action === 'createRepo') {
+      const name = String(body.name || '').trim();
+      if (!name) {
+        return res.status(400).json({ ok: false, error: 'Nama repo wajib diisi' });
+      }
+      if (!/^[a-zA-Z0-9._-]+$/.test(name)) {
+        return res.status(400).json({
+          ok: false,
+          error: 'Nama repo cuma boleh huruf, angka, titik, strip, underscore'
+        });
+      }
+      if (name.length > 100) {
+        return res.status(400).json({ ok: false, error: 'Nama repo maksimal 100 karakter' });
+      }
+
+      const payload = {
+        name: name,
+        description: body.description ? String(body.description).slice(0, 350) : '',
+        private: !!body.private,
+        auto_init: body.autoInit !== false
+      };
+
+      const r = await ghFetch('/user/repos', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      if (!r.ok) {
+        let errMsg = r.data.message || 'Gagal buat repo';
+        if (r.status === 403 || /permission|scope/i.test(errMsg)) {
+          errMsg += ' — Cek permission token GitHub (butuh Administration: Read and write untuk fine-grained, atau scope repo untuk classic)';
+        }
+        if (r.status === 422) {
+          errMsg = 'Nama repo sudah dipakai atau tidak valid';
+        }
+        return res.status(r.status).json({ ok: false, error: errMsg });
+      }
+
+      return res.status(200).json({
+        ok: true,
+        repo: {
+          full_name: r.data.full_name,
+          name: r.data.name,
+          owner: r.data.owner ? r.data.owner.login : '',
+          private: !!r.data.private,
+          default_branch: r.data.default_branch || 'main',
+          description: r.data.description
+        }
+      });
+    }
+
+    // ===== FILE ACTIONS =====
     const repoFull = String(body.repo || '').trim();
     if (!repoFull || repoFull.indexOf('/') === -1) {
       return res.status(400).json({ ok: false, error: 'Repo belum dipilih' });
@@ -183,6 +242,7 @@ module.exports = async function handler(req, res) {
     const branch = String(body.branch || 'main');
     const base = '/repos/' + owner + '/' + repo + '/contents';
 
+    // LIST
     if (action === 'list') {
       const path = cleanPath(body.path);
       const url = (path ? base + '/' + path : base) + '?ref=' + encodeURIComponent(branch);
@@ -203,6 +263,7 @@ module.exports = async function handler(req, res) {
       });
     }
 
+    // READ
     if (action === 'read') {
       const path = cleanPath(body.path);
       if (!path) return res.status(400).json({ ok: false, error: 'Path wajib diisi' });
@@ -226,6 +287,7 @@ module.exports = async function handler(req, res) {
       });
     }
 
+    // WRITE
     if (action === 'write') {
       const path = cleanPath(body.path);
       const content = body.content === undefined ? '' : String(body.content);
@@ -270,6 +332,7 @@ module.exports = async function handler(req, res) {
       return res.status(200).json({ ok: true });
     }
 
+    // DELETE
     if (action === 'delete') {
       const path = cleanPath(body.path);
       if (!path) return res.status(400).json({ ok: false, error: 'Path wajib diisi' });
@@ -290,6 +353,7 @@ module.exports = async function handler(req, res) {
       return res.status(200).json({ ok: true });
     }
 
+    // EXISTS
     if (action === 'exists') {
       const path = cleanPath(body.path);
       if (!path) return res.status(400).json({ ok: false, error: 'Path wajib diisi' });
